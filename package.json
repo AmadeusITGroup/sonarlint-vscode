@@ -319,6 +319,44 @@
             }
           ],
           "scope": "resource"
+        },
+        "sonarlint.cfamily": {
+          "type": "object",
+          "default": {},
+          "markdownDescription": "Extra configuration for C/C++/Objective C.",
+          "properties": {
+            "compilationDataBase": {
+              "type": "string",
+              "markdownDescription": "Path to a compilation database.",
+              "default": "${workspaceFolder}/compile_commands.json"
+            },
+            "buildWrapperOutput": {
+              "type": "string",
+              "markdownDescription": "Path to a build wrapper output.",
+              "default": "${workspaceFolder}/cfamily-compilation-database"
+            },
+            "buildWrapperEnv": {
+              "type": "array",
+              "markdownDescription": "Optional environment passed to the build wrapper output when it's transformed from the compilation database.\n\nExample: [\"var1=value\",\"var2=value\"]",
+              "default": []
+            },
+            "buildWrapperCompiler": {
+              "type": "string",
+              "oneOf": [
+                "msvc-cl",
+                "armclang",
+                "clang",
+                "iar",
+                "armcc",
+                "qcc",
+                "texas",
+                "diab"
+              ],
+              "markdownDescription": "Analyser used by the sensor(clang by default, other possibilities: msvc-cl, armclang, iar, armcc, qcc, texas, diab)",
+              "default": "clang"
+            }
+          },
+          "scope": "resource"
         }
       }
     },
@@ -501,6 +539,7 @@
     "prepare": "node scripts/prepare.js"
   },
   "dependencies": {
+    "compare-versions": "3.6.0",
     "expand-home-dir": "0.0.3",
     "find-java-home": "1.1.0",
     "follow-redirects": "1.13.0",
@@ -508,7 +547,7 @@
     "luxon": "1.26.0",
     "open": "7.3.0",
     "path-exists": "4.0.0",
-    "compare-versions": "3.6.0",
+    "shlex": "^2.1.0",
     "vscode-languageclient": "7.0.0"
   },
   "devDependencies": {

@@ -65,6 +65,9 @@ You can connect SonarLint to SonarQube >= 7.9 or SonarCloud and bind your worksp
 Connected mode will also allow to unlock analysis of those languages:
 
 - [Apex rules](https://rules.sonarsource.com/apex)
+- [C rules](https://rules.sonarsource.com/c)
+- [C++ rules](https://rules.sonarsource.com/cpp)
+- [Objective C rules](https://rules.sonarsource.com/objective-c)
 - [PL/SQL rules](https://rules.sonarsource.com/plsql).
 
 The first step is to configure connection details (user token, SonarQube server URL or SonarCloud organization). For security reasons, the token should not be stored in SCM with workspace settings. That's why we suggest to configure them in VSCode user settings.
@@ -130,6 +133,37 @@ In connected mode with SonarCloud or any commercial edition of SonarQube, SonarL
 When using SonarQube >= 8.6 and browsing a [security hotspot](https://docs.sonarqube.org/latest/user-guide/security-hotspots/) there will be a button offering to open the hotspot in SonarLint if you have already SonarLint running in VSCode. Limitation: this feature relies on local communication between your web browser and SonarLint, and consequently is not available in CodeSpaces.
 
 SonarLint keeps server side data in a local storage. If you change something on the server such as the quality profile, you can trigger an update of the local storage using the "SonarLint: Update all project bindings to SonarQube/SonarCloud" command on the command palette (search for "sonarlint").
+
+### C/C++/Objective C analysis specific configuration
+
+CFamily sensor brings an extra requirement - the location of the compilation map produced by the [build wrapper](https://docs.sonarqube.org/latest/analysis/languages/cfamily/#header-5 "A process capturing the details of the build and storing it in the map, which in turn is used when replaying the command by the sensor."). 
+
+Such map can be produced by a manual execution of the build wrapped with a dedicated interceptor process. However, SonarLint can also rely on a widely used [compilation database](https://clang.llvm.org/docs/JSONCompilationDatabase.html) as its input. When detected, it is automatically translated into a build wrapper format.
+
+It is also possible to tune other parameters which are usually set in [sonar-project.properties](https://docs.sonarqube.org/latest/analysis/languages/cfamily/)
+
+**Note**: CFamily sensors rely on the analysis executed locally. Therefore it is necessary to have a working compiler suitable for a given context. By default SonarLint will use `clang`, but it is possible to use one of the following: `msvc-cl`, `armclang`, `iar`, `armcc`, `qcc`, `texas`, `diab`. It is also possible to specify the full location of the compilation database and the environment variables passed to the build wrapper map. It is useful when `clang` or other compilers are not exposed automatically or when we want to use other version than the one available by default. 
+`buildWrapperOutput` can be treated as a meta-location. In the absence of `sonar.cfamily.build-wrapper-output` it is resolved on the workspace folder level and the resulting value feeds into `sonar.cfamily.build-wrapper-output` which is mandatory for CFamily sensors.
+It's also worth stressing that only `${workspaceFolder}` gets expanded. No other variable will be taken into account at this stage.
+
+Example:
+
+    // In .vscode/settings.json    
+    {        
+        "sonarlint.analyzerProperties": {
+            "sonar.cfamily.build-wrapper-output": "${workspaceFolder}/cfamily-compilation-database",
+            "sonar.cfamily.cache.enabled": "true",
+            "sonar.cfamily.cache.path": "${workspaceFolder}/.sonar-cache",
+            "sonar.cfamily.log.level": "DEBUG",
+            "sonar.log.level": "DEBUG",
+        },
+        "sonarlint.cfamily":{
+            "compilationDataBase": "${workspaceFolder}/compile_commands.json",
+            "buildWrapperCompiler": "clang",
+            "buildWrapperEnv": ["PATH=/home/me/bin"],
+            "buildWrapperOutput": "${workspaceFolder}/cfamily-compilation-database"
+        }
+    }
 
 ## Contributions
 
