@@ -31,6 +31,7 @@ import { AllRulesTreeDataProvider, ConfigLevel, Rule, RuleNode } from './rules';
 import { initScm } from './scm';
 import { code2ProtocolConverter, protocol2CodeConverter } from './uri';
 import * as util from './util';
+import * as shlex from 'shlex';
 
 declare let v8debug: object;
 const DEBUG = typeof v8debug === 'object' || util.startedInDebugMode(process);
@@ -363,6 +364,24 @@ export function activate(context: VSCode.ExtensionContext) {
     })
   );
   installClasspathListener(languageClient);
+
+  // Convert compilation databases to the build-wrapper-dump format
+  for (const workspaceFolder of VSCode.workspace.workspaceFolders!) {
+    const defaultCompilationDatabaseFile = Path.join(workspaceFolder.uri.fsPath, "compile_commands.json")
+    const compilationDatabaseFile = VSCode.workspace.getConfiguration('sonarlint.cfamily',
+    workspaceFolder).get<string>('compilationDataBase', defaultCompilationDatabaseFile).replace('${workspaceFolder}', workspaceFolder.uri.fsPath);
+
+    convertCompilationDB(VSCode.Uri.file(compilationDatabaseFile));
+
+    const compilationDbwatcher = VSCode.workspace.createFileSystemWatcher(`**/${Path.basename(compilationDatabaseFile)}`);    
+    compilationDbwatcher.onDidChange((modifiedFile) => {
+      convertCompilationDB(modifiedFile);
+    });
+    compilationDbwatcher.onDidCreate((createdFile) => {
+      convertCompilationDB(createdFile);
+    });
+    context.subscriptions.push(compilationDbwatcher);
+  }
 }
 
 async function showNotificationForFirstSecretsIssue(context: VSCode.ExtensionContext) {
@@ -579,6 +598,100 @@ export function parseVMargs(params: string[], vmargsLine: string) {
 
 function getSonarLintConfiguration(): VSCode.WorkspaceConfiguration {
   return VSCode.workspace.getConfiguration('sonarlint');
+}
+
+async function convertCompilationDB(compilationDBFile: VSCode.Uri): Promise<void> {
+  const compilationDatabaseFile = compilationDBFile.fsPath;
+  if (!FS.existsSync(compilationDatabaseFile)) {
+    return;
+  }
+  const workspacefolder = VSCode.workspace.getWorkspaceFolder(compilationDBFile);
+
+  const defaultBuildWrapperOutput = Path.join(workspacefolder.uri.fsPath, 'cfamily-compilation-database')
+  const buildWrapperOutput = VSCode.workspace.getConfiguration('sonarlint.cfamily', workspacefolder).get<string>('buildWrapperOutput', defaultBuildWrapperOutput);
+  const buildWrapperEnv = VSCode.workspace.getConfiguration('sonarlint.cfamily', workspacefolder).get<string[]>('buildWrapperEnv', []);
+  const buildWrapperCompiler = VSCode.workspace.getConfiguration('sonarlint.cfamily', workspacefolder).get<string>('buildWrapperCompiler', 'clang');
+
+  let compilerPathProperty = null;
+  let environment = [];
+  if (buildWrapperEnv.length > 0) {
+    environment = buildWrapperEnv;
+  } else {
+    const pathSegments = process.env.PATH.split(Path.delimiter)
+    for (let index = 0; index < pathSegments.length; index++) {
+      const compilerPath = Path.join(pathSegments[index], buildWrapperCompiler);
+      try {
+        FS.accessSync(compilerPath, FS.constants.R_OK | FS.constants.X_OK);
+        compilerPathProperty = ['PATH', pathSegments[index]].join('=');
+        environment.push(compilerPathProperty);
+        break;
+      } catch {
+        continue;
+      }
+    }
+    if (!compilerPathProperty) {
+      // Note: last chance - the entire environment captured from the current process is considered
+      Object.keys(process.env).forEach(function (key) {
+        environment.push([key, process.env[key]].join('='));
+      });
+    }
+  }
+
+  let invokeConfigUpdate = false;
+  const analyzerProperties = VSCode.workspace.getConfiguration().get<object>('sonarlint.analyzerProperties', {});
+
+  if (!analyzerProperties['sonar.cfamily.build-wrapper-output'] && buildWrapperOutput){
+    analyzerProperties['sonar.cfamily.build-wrapper-output'] = buildWrapperOutput.replace('${workspaceFolder}', workspacefolder.uri.fsPath);
+    invokeConfigUpdate = true;
+  }
+
+  if ( analyzerProperties['sonar.cfamily.build-wrapper-output'] && analyzerProperties['sonar.cfamily.build-wrapper-output'].includes('${workspaceFolder}') ) {
+    analyzerProperties['sonar.cfamily.build-wrapper-output'] = analyzerProperties['sonar.cfamily.build-wrapper-output'].replace('${workspaceFolder}', workspacefolder.uri.fsPath);
+    invokeConfigUpdate = true;
+  }
+
+  if ( analyzerProperties['sonar.cfamily.cache.path'] && analyzerProperties['sonar.cfamily.cache.path'].includes('${workspaceFolder}') ) {
+    analyzerProperties['sonar.cfamily.cache.path'] = analyzerProperties['sonar.cfamily.cache.path'].replace('${workspaceFolder}', workspacefolder.uri.fsPath);
+    invokeConfigUpdate = true;
+  }
+
+  if (invokeConfigUpdate){
+    VSCode.workspace.getConfiguration().update('sonarlint.analyzerProperties', analyzerProperties);
+  }
+
+  const buildWrapperMapFile = Path.join(analyzerProperties['sonar.cfamily.build-wrapper-output'].replace('${workspaceFolder}', workspacefolder.uri.fsPath), 'build-wrapper-dump.json');
+  if( FS.existsSync(buildWrapperMapFile) && FS.statSync(buildWrapperMapFile).mtime >  FS.statSync(compilationDatabaseFile).mtime ){
+    return;
+  }
+
+  console.time(`Processing ${compilationDatabaseFile}`);
+  FS.readFile(compilationDatabaseFile, { encoding: 'utf8' }, (err: NodeJS.ErrnoException | null, data: string) => {
+    if (err === null) {
+      const compilationDatabaseData = JSON.parse(data);
+      const buildWrapperDump = {
+        version: 0,
+        captures: []
+      }
+      for (let index = 0; index < compilationDatabaseData.length; index++) {
+        const compilationEntry = compilationDatabaseData[index];
+        const args: string[] = compilationEntry?.arguments || shlex.split(compilationEntry.command);
+        const capture = {
+          'compiler': buildWrapperCompiler,
+          'cwd': compilationEntry.directory,
+          'executable': args[0],
+          'cmd': args,
+          'env': environment
+        };
+        buildWrapperDump.captures.push(capture);
+      }
+
+      FS.mkdir(Path.dirname(buildWrapperMapFile), (err) => {
+        FS.writeFile(buildWrapperMapFile, JSON.stringify(buildWrapperDump, null, 4), () => {
+          console.timeEnd(`Processing ${compilationDatabaseFile}`);
+        });
+      });
+    }
+  });
 }
 
 export function deactivate(): Thenable<void> {
