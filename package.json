@@ -503,7 +503,7 @@
   "dependencies": {
     "expand-home-dir": "0.0.3",
     "find-java-home": "1.2.2",
-    "follow-redirects": "1.14.7",
+    "follow-redirects": "1.14.8",
     "inly": "4.0.8",
     "luxon": "2.3.0",
     "path-exists": "4.0.0",
